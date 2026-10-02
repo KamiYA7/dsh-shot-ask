@@ -82,11 +82,22 @@ function launchBall(ctx) {
   }
   const home = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
   try {
-    const child = spawn(BALL_ELECTRON, [BALL_DIR], {
+    // The DSH host itself runs in Electron's Node mode, and that flag is
+    // inherited by every child. Handing it to the ball would start it as plain
+    // Node, where `require('electron').app` is undefined and `app.setPath`
+    // throws before any window exists.
+    const env = { ...process.env, DSH_HOME: home }
+    delete env.ELECTRON_RUN_AS_NODE
+    // Start it exactly the way the shipped launcher does: `.` as the app path
+    // with the ball directory as the working directory. Handing Electron the
+    // absolute directory instead starts the process but never creates the
+    // window, which is a silent way to lose the ball entirely.
+    const child = spawn(BALL_ELECTRON, ['.'], {
+      cwd: BALL_DIR,
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
-      env: { ...process.env, DSH_HOME: home },
+      env,
     })
     child.unref()
     ctx.logger?.info?.('[dsh-shot-bridge] launched the capture ball (%s) for DSH_HOME=%s', BALL_DIR, home)
