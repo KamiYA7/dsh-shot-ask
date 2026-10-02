@@ -1,0 +1,7 @@
+# Bundle patch: mount the shot-ask host half into the composition.
+# The host half is inert today (the whole feature lives in the browser), but the
+# loader entry is what makes `dsh.client` visible to the modules scanner, which
+# is how lib/client.js reaches window.__DSH_BOOT__.
+- insert:
+    - id: dsh-shot-ask
+      name: dsh-shot-ask

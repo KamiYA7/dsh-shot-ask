@@ -1,0 +1,9 @@
+# This directory is its own workspace root on purpose.
+#
+# It lives under G:/ZM/DSH/, where the checkout's own pnpm-workspace.yaml would
+# otherwise claim it: pnpm walked up, treated this package as one of nearly 300
+# workspace projects, and tried to purge and reinstall the DSH checkout's
+# node_modules. Declaring a single-package workspace here stops that walk, so the
+# ball's Electron dependency can never touch the harness checkout.
+packages:
+  - '.'

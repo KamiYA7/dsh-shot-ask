@@ -1,0 +1,14 @@
+{
+  "name": "dsh-shot-ball",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop floating capture ball: box-select the screen, save the PNG locally, then type a question and submit it straight into DSH.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "44.0.0"
+  },
+  "license": "MIT"
+}

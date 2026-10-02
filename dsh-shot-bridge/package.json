@@ -1,0 +1,25 @@
+{
+  "name": "dsh-shot-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Loopback HTTP bridge that admits a captured screenshot plus a question into a DSH session as a real prompt.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@deepseek-ai/dsh-llm": "workspace:*"
+  }
+}

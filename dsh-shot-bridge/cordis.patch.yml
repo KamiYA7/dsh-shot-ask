@@ -1,0 +1,10 @@
+# Bundle patch: mount the shot bridge beside the web surface.
+#
+# The bridge rides the existing `webServer` route registry, so it opens no port
+# of its own and needs no webserver config of its own. It exists because a
+# process outside the browser (the desktop capture ball) cannot reach the
+# browser-authenticated Remote API: the only authenticated ingress is the signed
+# browser cookie. Admitting a prompt from inside the host is the supported way in.
+- insert:
+    - id: dsh-shot-bridge
+      name: dsh-shot-bridge

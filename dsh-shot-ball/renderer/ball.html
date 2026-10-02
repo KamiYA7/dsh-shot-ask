@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'" />
+  <title>shot ball</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 420px;
+      height: 132px;
+      background: transparent;
+      overflow: hidden;
+      -webkit-user-select: none;
+      user-select: none;
+      font: 12px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+      /* The gutter around the ball must not intercept clicks; only the ball does. */
+      pointer-events: none;
+    }
+    /* The ball occupies the window's top-left corner; the rest is a transparent
+       gutter that the toast slides into. Dragging is handled in ball.js rather
+       than through `-webkit-app-region: drag`, which swallowed the click before
+       it could reach a listener. */
+    #ball {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 58px;
+      height: 58px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: grab;
+      color: #fff;
+      background: linear-gradient(145deg, #5b86ff, #3556d8);
+      border: 1px solid rgba(255, 255, 255, 0.24);
+      box-shadow: 0 8px 22px rgba(0, 0, 0, 0.42);
+      pointer-events: auto;
+      transition: transform 0.12s ease, box-shadow 0.12s ease;
+    }
+    #ball:hover { transform: scale(1.04); box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5); }
+    #ball:active { cursor: grabbing; }
+    #ball.busy { opacity: 0.65; }
+    /* The capture mark doubles as the click target's own affordance. */
+    #ball svg { pointer-events: none; }
+    #hide {
+      position: absolute;
+      right: -2px;
+      top: -2px;
+      width: 17px;
+      height: 17px;
+      border-radius: 50%;
+      background: rgba(18, 18, 22, 0.94);
+      color: #fff;
+      font-size: 11px;
+      line-height: 17px;
+      text-align: center;
+      cursor: pointer;
+      border: 1px solid rgba(255, 255, 255, 0.32);
+      -webkit-app-region: no-drag;
+      opacity: 0;
+      transition: opacity 0.12s ease;
+    }
+    #ball:hover #hide { opacity: 1; }
+    #toast {
+      position: absolute;
+      left: 64px;
+      top: 8px;
+      min-width: 180px;
+      max-width: 320px;
+      padding: 7px 10px;
+      border-radius: 8px;
+      background: rgba(22, 22, 26, 0.96);
+      color: #eaeaea;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.18s ease;
+      -webkit-app-region: no-drag;
+    }
+    #toast.show { opacity: 1; }
+    #toast.error { color: #ffb4b4; }
+  </style>
+</head>
+<body>
+  <div id="ball" title="点击框选截图；拖动可移动位置" role="button" tabindex="0" aria-label="悬浮截图">
+    <svg viewBox="0 0 16 16" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+      <path d="M1.5 5.2V3.6A2.1 2.1 0 0 1 3.6 1.5h1.6" />
+      <path d="M14.5 10.8v1.6a2.1 2.1 0 0 1-2.1 2.1h-1.6" />
+      <path d="M5.2 14.5H3.6a2.1 2.1 0 0 1-2.1-2.1v-1.6" />
+      <path d="M10.8 1.5h1.6a2.1 2.1 0 0 1 2.1 2.1v1.6" />
+      <circle cx="8" cy="8" r="2.6" />
+    </svg>
+    <div id="hide" title="关闭悬浮球（重启程序可恢复）">×</div>
+  </div>
+  <div id="toast"></div>
+  <script src="ball.js"></script>
+</body>
+</html>

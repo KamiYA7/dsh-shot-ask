@@ -1,0 +1,22 @@
+# Runtime dependencies — each package installs its own (see the README)
+node_modules/
+
+# pnpm's content-addressed store, Electron's download cache, and the pnpm
+# project snapshots they keep: machine-local, reproducible, and huge
+.pnpm-store/
+.electron-cache/
+
+# dsh-shot-ball runtime state: Chromium profile, logs, per-machine preferences
+dsh-shot-ball/.cache/
+dsh-shot-ball/.userdata/
+
+# The fast shutter is compiled from scripts/Capture.cs on first launch; the
+# repository carries the source, not a prebuilt binary.
+dsh-shot-ball/scripts/dsh-shot-capture.exe
+
+# Local rollback copies, deliberately kept outside the published tree
+.local-backups/
+
+# Per-machine pnpm settings: dsh-shot-ball/.npmrc pins a store directory on a
+# specific drive. Keep the published tree portable; see the README.
+.npmrc
