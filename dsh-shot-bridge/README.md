@@ -89,12 +89,14 @@ token 每次 DSH 启动重新生成，所以**重启 DSH 后桌面球会自动�
 
 本插件挂载时会把桌面球一起拉起来（`launchBall`），所以**不需要系统开机自启**：DSH 起来，球就在；DSH 用哪个实例，球就提交回哪个实例。
 
-- 启动时**显式传 `DSH_HOME`**（本进程自己的 home）。这一步是关键：网页版 home 写的是 `3080`、桌面版 home 写的是 `19387`，token 也不同——不传的话球会按 `start-ball.cmd` 的默认值提交到另一个实例去。
+- 启动的是 **`start-ball.cmd`（经 shell 调用）**，不是直接 spawn Electron。这是有意的：直接 spawn Electron 时，在这个进程树里球能起进程、能注册热键，却**永远不创建窗口**；走脚本这条路与人工双击完全一致。
+- 启动时**显式传 `DSH_HOME`**（本进程自己的 home）。这一步是关键：网页版 home 写的是 `3080`、桌面版 home 写的是 `19387`，token 也不同——不传的话球会提交到另一个实例去。
+- 同时**清除 `ELECTRON_RUN_AS_NODE`**：DSH 宿主本身以 Electron 的 Node 模式运行，子进程会继承它；带着它启动 Electron 会让球以纯 Node 运行，并在 `app.setPath` 处崩溃。
 - 球自带单实例锁，**重复启动无害**：已经在跑的球不会被拉出第二个。
-- 球是 `detached` 启动的，所以 **DSH 退出后球会留着**（不会自动关）。要它跟着 DSH 一起退，需要额外做进程树清理。
+- **不 detached**：球留在本实例的进程树里，**DSH 退出时进程树回收会把它一起结束**。这是刻意的——脱离进程树的球会在桥接消失后还悬在那儿，提交必然失败。
 - 关掉自启：设环境变量 `DSH_SHOT_BALL_AUTOSTART=0`。
-- 换球的位置：设 `DSH_SHOT_BALL_DIR`（默认 `G:\ZM\DSH\zmdsh\dsh-shot-ball`）。
-- 找不到 Electron 时不会静默：日志留 `ball autostart skipped: … is missing`。
+- 换球的位置：设 `DSH_SHOT_BALL_DIR`（默认是同仓库里的 `dsh-shot-ball`）。
+- 找不到启动脚本时不会静默：日志留 `ball autostart skipped: … is missing`。
 
 ## CORS 与 token 传递（踩过的坑）
 
