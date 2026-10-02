@@ -48,8 +48,14 @@ const MAX_IMAGE_BYTES = 12 * 1024 * 1024
 
 const ALLOWED_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
 
-/** The ball checkout this bridge starts; override with `DSH_SHOT_BALL_DIR`. */
-const BALL_DIR = process.env.DSH_SHOT_BALL_DIR ?? 'G:\\ZM\\DSH\\zmdsh\\dsh-shot-ball'
+/**
+ * The ball checkout this bridge starts; override with `DSH_SHOT_BALL_DIR`.
+ *
+ * The default is the sibling directory of this package inside the repository,
+ * so a clone works wherever it lands.
+ */
+const BALL_DIR = process.env.DSH_SHOT_BALL_DIR
+  ?? path.resolve(import.meta.dirname, '..', '..', 'dsh-shot-ball')
 const BALL_ELECTRON = path.join(BALL_DIR, 'node_modules', 'electron', 'dist', 'electron.exe')
 
 /**
