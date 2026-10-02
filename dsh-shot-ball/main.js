@@ -97,7 +97,10 @@ function writePrefs(patch) {
 
 function createBall() {
   const prefs = readPrefs()
-  if (prefs.hidden === true) return
+  // `prefs.hidden` records a previous × press, but it must not suppress the
+  // window forever: the × hides the ball for that session and the next launch
+  // shows it again, which is what its tooltip promises. The process keeps
+  // running while hidden, so the global hotkey stays alive either way.
 
   const display = screen.getPrimaryDisplay()
   const area = display.workArea
@@ -145,6 +148,19 @@ function showBall() {
   writePrefs({ hidden: false })
   if (ballWindow === null || ballWindow.isDestroyed()) createBall()
   else ballWindow.show()
+}
+
+/**
+ * Put the ball back after a capture, but only if the user has not hidden it.
+ *
+ * `hideBall()` is a user instruction for the rest of the session; an
+ * unconditional `show()` here made the ball reappear right after every capture,
+ * so a hidden ball never stayed hidden.
+ */
+function restoreBall() {
+  if (readPrefs().hidden === true) return
+  const ball = ballWindow
+  if (ball !== null && !ball.isDestroyed()) ball.show()
 }
 
 function hideBall() {
@@ -459,9 +475,33 @@ function openOverlays(frames) {
 
 // ── the question window ──────────────────────────────────────────────────────
 
-/** @type {BrowserWindow | null} */
-let askWindow = null
+/**
+ * Every open question window, keyed by its `webContents.id`.
+ *
+ * One capture can leave its question window unanswered while the next capture
+ * opens another, so a single slot would drop the first window on the floor: its
+ * submit or cancel would then act on whichever window happened to be newest.
+ * The key is the identity the IPC layer reports for the sender, so
+ * window -> entry and entry -> window are the same lookup.
+ * @type {Map<number, {id: number, window: BrowserWindow}>}
+ */
+const askWindows = new Map()
 
+/**
+ * Resolve the question window that sent one IPC message.
+ *
+ * The sender — never "the newest window" — decides which entry an action
+ * applies to, so concurrent question windows cannot act on each other.
+ * @param {Electron.IpcMainInvokeEvent} event - the invoke event carrying `sender`.
+ * @returns {{id: number, window: BrowserWindow} | undefined} that window's entry.
+ */
+function askEntryForEvent(event) {
+  const sender = BrowserWindow.fromWebContents(event.sender)
+  if (sender === null) return undefined
+  return askWindows.get(sender.webContents.id)
+}
+
+/** Open one question window for a saved capture and start tracking it. */
 function openAskWindow(cropPath, rect) {
   const display = screen.getDisplayNearestPoint({ x: rect.x, y: rect.y })
   const area = display.workArea
@@ -470,7 +510,7 @@ function openAskWindow(cropPath, rect) {
   const x = Math.round(Math.min(Math.max(area.x + 24, rect.x), area.x + area.width - width - 24))
   const y = Math.round(Math.min(Math.max(area.y + 24, rect.y + rect.height + 12), area.y + area.height - height - 24))
 
-  askWindow = new BrowserWindow({
+  const askWindow = new BrowserWindow({
     width,
     height,
     x: Number.isFinite(x) ? x : undefined,
@@ -491,21 +531,36 @@ function openAskWindow(cropPath, rect) {
       sandbox: false,
     },
   })
+  const id = askWindow.webContents.id
+  askWindows.set(id, { id, window: askWindow })
   askWindow.setAlwaysOnTop(true, 'screen-saver')
   askWindow.loadFile(path.join(__dirname, 'renderer', 'ask.html'))
   askWindow.webContents.once('did-finish-load', () => {
+    if (askWindow.isDestroyed()) return
     askWindow.webContents.send('ask:init', {
       imagePath: cropPath,
       imageUrl: `file://${cropPath.replace(/\\/g, '/')}`,
       bridge: readBridgeConfig(),
     })
   })
-  askWindow.on('closed', () => { askWindow = null })
+  // A window leaves the map however it closes — submit, cancel, the renderer's
+  // own `window.close()`, or the human — and only ever removes its own entry.
+  askWindow.on('closed', () => { askWindows.delete(id) })
+  ballLog(`ask window opened (id ${id}); ${askWindows.size} open`)
 }
 
-function closeAskWindow() {
-  if (askWindow !== null && !askWindow.isDestroyed()) askWindow.destroy()
-  askWindow = null
+/**
+ * Close one tracked question window and drop its entry.
+ *
+ * The entry is deleted before the destroy so a repeat call for the same window
+ * is a no-op even if the `closed` event has not run yet.
+ * @param {{id: number, window: BrowserWindow} | undefined} entry - window to close.
+ */
+function closeAskWindow(entry) {
+  if (entry === undefined) return
+  askWindows.delete(entry.id)
+  if (!entry.window.isDestroyed()) entry.window.destroy()
+  ballLog(`ask window closed (id ${entry.id}); ${askWindows.size} open`)
 }
 
 // ── logging ──────────────────────────────────────────────────────────────────
@@ -644,7 +699,17 @@ const DEFAULT_CAPTURE_HOTKEY = 'Control+Alt+S'
  * @returns {Promise<{ok: boolean, message?: string}>} the request outcome.
  */
 async function beginCapture() {
-  if (captureInFlight) return { ok: false, message: '已有一次截图在进行中' }
+  // Self-heal: a capture that never tore its overlays down must not refuse every
+  // later hotkey for the rest of the session. No live overlay means no capture
+  // is actually in flight, whatever the flag says.
+  if (captureInFlight && overlayWindows.every((entry) => entry.isDestroyed())) {
+    ballLog('stale capture state cleared: the flag was set but no overlay is alive')
+    closeOverlays()
+  }
+  if (captureInFlight) {
+    ballLog('capture refused: a capture is already in progress')
+    return { ok: false, message: '已有一次截图在进行中' }
+  }
   captureInFlight = true
   try {
     const started = Date.now()
@@ -680,7 +745,11 @@ function registerCaptureHotkey() {
   globalShortcut.unregisterAll()
   const registered = globalShortcut.register(accelerator, () => {
     ballLog(`capture hotkey pressed (${accelerator})`)
-    void beginCapture()
+    // Surface a refusal in the log: a dead hotkey that says nothing anywhere is
+    // the worst possible failure mode for the only entry point.
+    void beginCapture().then((result) => {
+      if (!result.ok) ballLog(`capture did not start: ${result.message}`)
+    })
   })
   ballLog(registered
     ? `capture hotkey registered: ${accelerator}`
@@ -697,7 +766,7 @@ ipcMain.handle('overlay:select', async (_event, payload) => {
   const frame = frozen.get(id)
   if (frame === undefined) {
     closeOverlays()
-    if (ballWindow !== null && !ballWindow.isDestroyed()) ballWindow.show()
+    restoreBall()
     return { ok: false, message: '选区所属的显示器已失效，请重新框选' }
   }
   // The renderer works in display-local pixels; the shutter needs virtual-desktop
@@ -717,34 +786,44 @@ ipcMain.handle('overlay:select', async (_event, payload) => {
   } catch (error) {
     ballLog(`selection capture failed: ${error.message}`)
     closeOverlays()
-    if (ballWindow !== null && !ballWindow.isDestroyed()) ballWindow.show()
+    restoreBall()
     return { ok: false, message: `截图失败：${error.message}` }
   }
 })
 
 ipcMain.handle('overlay:cancel', () => {
   closeOverlays()
-  if (ballWindow !== null && !ballWindow.isDestroyed()) ballWindow.show()
+  restoreBall()
   return { ok: true }
 })
 
-ipcMain.handle('ask:submit', async (_event, payload) => {
+ipcMain.handle('ask:submit', async (event, payload) => {
+  const entry = askEntryForEvent(event)
+  if (entry === undefined) {
+    ballLog('ask:submit ignored: the sending window is not tracked')
+    return { ok: false, message: '这个提问窗口已经不在管理中了' }
+  }
   const question = String(payload && payload.question ? payload.question : '').trim()
   const imagePath = String(payload && payload.imagePath ? payload.imagePath : '')
   if (imagePath === '') return { ok: false, message: '没有拿到图片路径' }
   // An empty question is allowed: the image alone is a valid prompt.
   const result = await submitToBridge(imagePath, question)
   if (result.ok) {
-    closeAskWindow()
-    if (ballWindow !== null && !ballWindow.isDestroyed()) ballWindow.show()
+    // Only the submitting window goes away. Every other open question window
+    // keeps its own entry, so it stays interactive and cancellable.
+    closeAskWindow(entry)
+    restoreBall()
     askBallToRender('submitted')
   }
   return result
 })
 
-ipcMain.handle('ask:cancel', () => {
-  closeAskWindow()
-  if (ballWindow !== null && !ballWindow.isDestroyed()) ballWindow.show()
+ipcMain.handle('ask:cancel', (event) => {
+  // A cancel can arrive after the entry is already gone (double cancel, or a
+  // window that submitted while this message was in flight).
+  const entry = askEntryForEvent(event)
+  if (entry !== undefined) closeAskWindow(entry)
+  restoreBall()
   return { ok: true }
 })
 

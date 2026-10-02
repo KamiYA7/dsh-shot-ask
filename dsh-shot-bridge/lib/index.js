@@ -57,6 +57,8 @@ const ALLOWED_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'i
 const BALL_DIR = process.env.DSH_SHOT_BALL_DIR
   ?? path.resolve(import.meta.dirname, '..', '..', 'dsh-shot-ball')
 const BALL_ELECTRON = path.join(BALL_DIR, 'node_modules', 'electron', 'dist', 'electron.exe')
+/** The shipped launcher; the bridge starts the ball through this, not Electron. */
+const BALL_CMD = path.join(BALL_DIR, 'start-ball.cmd')
 
 /**
  * Start the desktop capture ball alongside this DSH instance.
@@ -71,13 +73,15 @@ const BALL_ELECTRON = path.join(BALL_DIR, 'node_modules', 'electron', 'dist', 'e
  * @param ctx - plugin context, used only for the start/skip log lines.
  */
 function launchBall(ctx) {
+  // On by default: opening DSH brings the ball up, which is the whole point of
+  // the hotkey. Set DSH_SHOT_BALL_AUTOSTART=0 to launch start-ball.cmd yourself.
   if (process.env.DSH_SHOT_BALL_AUTOSTART === '0') {
     ctx.logger?.info?.('[dsh-shot-bridge] ball autostart disabled (DSH_SHOT_BALL_AUTOSTART=0)')
     return
   }
   if (process.platform !== 'win32') return
-  if (!fs.existsSync(BALL_ELECTRON)) {
-    ctx.logger?.warn?.('[dsh-shot-bridge] ball autostart skipped: %s is missing', BALL_ELECTRON)
+  if (!fs.existsSync(BALL_CMD)) {
+    ctx.logger?.warn?.('[dsh-shot-bridge] ball autostart skipped: %s is missing', BALL_CMD)
     return
   }
   const home = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
@@ -88,15 +92,20 @@ function launchBall(ctx) {
     // throws before any window exists.
     const env = { ...process.env, DSH_HOME: home }
     delete env.ELECTRON_RUN_AS_NODE
-    // Start it exactly the way the shipped launcher does: `.` as the app path
-    // with the ball directory as the working directory. Handing Electron the
-    // absolute directory instead starts the process but never creates the
-    // window, which is a silent way to lose the ball entirely.
-    const child = spawn(BALL_ELECTRON, ['.'], {
+    // Launch the shipped script through the shell rather than calling Electron
+    // directly. Children of the DSH host run inside its process tree, where a
+    // directly spawned Electron starts, logs, registers its hotkey — and never
+    // creates a window. The script is also what a human double-clicks when the
+    // ball works, so this keeps the automated path identical to the known-good
+    // one instead of merely resembling it.
+    // Deliberately NOT detached: the ball belongs to this DSH instance, so the
+    // DSH process-tree teardown takes it down when DSH exits. A detached ball
+    // would outlive the bridge that feeds it and float there uselessly.
+    const child = spawn(BALL_CMD, [], {
       cwd: BALL_DIR,
-      detached: true,
       stdio: 'ignore',
-      windowsHide: true,
+      windowsHide: false,
+      shell: true,
       env,
     })
     child.unref()
@@ -198,7 +207,7 @@ function presentedToken(req, url) {
  * @param activity - sessionId → newest observed event time.
  * @returns the agent to admit into, or undefined when no session is live.
  */
-function resolveTargetAgent(ctx, requested, activity) {
+function resolveTargetAgent(ctx, requested, activity, userActivity) {
   if (typeof requested === 'string' && requested.length > 0) {
     const explicit = ctx.agents.get(requested)
     if (explicit !== undefined) return explicit
@@ -209,18 +218,21 @@ function resolveTargetAgent(ctx, requested, activity) {
     if (pinnedAgent !== undefined) return pinnedAgent
   }
   const live = ctx.agents.list()
-  // Newest event stream wins; a session never observed falls back to its
-  // registry position so a brand-new session is still reachable.
-  let newest = null
-  let newestAt = -1
-  for (const agent of live) {
-    const seen = activity.get(agent.id)
-    if (seen !== undefined && seen > newestAt) {
-      newestAt = seen
-      newest = agent
+  // The conversation the human last typed into wins; only when no session has
+  // ever seen a user message does the any-event ranking apply, so a deployment
+  // without one still reaches whatever is running.
+  for (const source of [userActivity, activity]) {
+    let newest = null
+    let newestAt = -1
+    for (const agent of live) {
+      const seen = source.get(agent.id)
+      if (seen !== undefined && seen > newestAt) {
+        newestAt = seen
+        newest = agent
+      }
     }
+    if (newest !== null) return newest
   }
-  if (newest !== null) return newest
   for (const agent of live) {
     if (agent.status === 'running' || agent.status === 'idle') return agent
   }
@@ -256,19 +268,25 @@ export function apply(ctx) {
     }
   }
 
-  // sessionId → newest event time seen, the input to target selection below.
+  // sessionId → newest event time seen (any event), the fallback ranking input.
   const activity = new Map()
+  // sessionId → newest USER message time. A capture belongs to the conversation
+  // the human last typed into, so this outranks the any-event map: a background
+  // session that merely kept working must not steal the capture.
+  const userActivity = new Map()
 
-  // Every session event moves its own stamp. This is what makes "the session you
-  // are actually using" observable: the conversation being typed in keeps
-  // emitting, while a session idle since yesterday does not. `ctx.on` is an
-  // effect, so Cordis unwinds the subscription when this plugin unloads.
+  // `ctx.on` is an effect, so Cordis unwinds the subscription when this plugin
+  // unloads.
   ctx.on('session/event', (session, event) => {
     const at = typeof event?.time === 'number' ? event.time : Date.now()
     const id = session?.id
     if (typeof id !== 'string') return
     const previous = activity.get(id)
     if (previous === undefined || at >= previous) activity.set(id, at)
+    if (typeof event?.type === 'string' && event.type.startsWith('user/')) {
+      const previousUser = userActivity.get(id)
+      if (previousUser === undefined || at >= previousUser) userActivity.set(id, at)
+    }
   })
 
   const disposeRoute = ctx.webServer.register({
@@ -277,7 +295,7 @@ export function apply(ctx) {
     handler: (req, res) => {
       if (req.method === 'OPTIONS') { respondPreflight(res); return }
       if (req.method !== 'GET') { respond(res, 405, { error: 'use GET' }); return }
-      const target = resolveTargetAgent(ctx, undefined, activity)
+      const target = resolveTargetAgent(ctx, undefined, activity, userActivity)
       respond(res, 200, {
         ok: true,
         plugin: name,
@@ -313,7 +331,7 @@ export function apply(ctx) {
           return
         }
         try {
-          const agent = resolveTargetAgent(ctx, request.sessionId, activity)
+          const agent = resolveTargetAgent(ctx, request.sessionId, activity, userActivity)
           if (agent === undefined) {
             respond(res, 409, {
               error: '没有活着的 DSH 会话可以注入；先打开一个会话再试。',
